@@ -17,6 +17,47 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
+resource "aws_iam_role" "firehose_role" {
+  name = "firehose_to_s3_role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = "sts:AssumeRole",
+        Principal = {
+          Service = "firehose.amazonaws.com"
+        },
+        Effect = "Allow",
+      }
+    ]
+  })
+}
+
+
+resource "aws_iam_role_policy" "firehose_policy" {
+  role = aws_iam_role.firehose_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectAcl",
+          "s3:GetBucketLocation",
+          "s3:ListBucket"
+        ],
+        Resource = [
+          aws_s3_bucket.lambda_logs.arn,
+          "${aws_s3_bucket.lambda_logs.arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy" "lambda_policy" {
   name = "lambda_kms_creator_policy"
   role = aws_iam_role.lambda_role.id
@@ -60,11 +101,46 @@ resource "aws_lambda_function" "create_kms_key" {
   timeout       = 10
 }
 
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
+resource "aws_s3_bucket" "lambda_logs" {
+  bucket = "lambda-logs-${random_id.suffix.hex}"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
 resource "aws_cloudwatch_log_group" "lambda_log_group" {
   name              = "/aws/lambda/${aws_lambda_function.create_kms_key.function_name}"
   retention_in_days = 14
 }
 
+resource "aws_kinesis_firehose_delivery_stream" "cw_to_s3" {
+  name        = "lambda-logs-to-s3"
+  destination = "s3"
+
+  s3_configuration {
+    role_arn   = aws_iam_role.firehose_role.arn
+    bucket_arn = aws_s3_bucket.lambda_logs.arn
+    buffering_size = 5
+    compression_format = "GZIP"
+  }
+}
+
+resource "aws_cloudwatch_log_subscription_filter" "lambda_to_s3" {
+  name            = "lambda_to_s3_subscription"
+  log_group_name  = aws_cloudwatch_log_group.lambda_log_group.name
+  filter_pattern  = ""
+  destination_arn = aws_kinesis_firehose_delivery_stream.cw_to_s3.arn
+  depends_on      = [aws_lambda_function.create_kms_key]
+}
+
 output "lambda_name" {
   value = aws_lambda_function.create_kms_key.function_name
+}
+
+output "logs_bucket" {
+  value = aws_s3_bucket.lambda_logs.bucket
 }
