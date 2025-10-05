@@ -60,6 +60,11 @@ resource "aws_lambda_function" "create_kms_key" {
   timeout       = 10
 }
 
+resource "aws_cloudwatch_log_group" "lambda_log_group" {
+  name              = "/aws/lambda/${aws_lambda_function.create_kms_key.function_name}"
+  retention_in_days = 14
+}
+
 output "lambda_name" {
   value = aws_lambda_function.create_kms_key.function_name
 }
