@@ -44,10 +44,13 @@ resource "aws_iam_role_policy" "firehose_policy" {
       {
         Effect = "Allow",
         Action = [
-          "s3:PutObject",
-          "s3:PutObjectAcl",
+          "s3:AbortMultipartUpload",
           "s3:GetBucketLocation",
-          "s3:ListBucket"
+          "s3:GetObject",
+          "s3:ListBucket",
+          "s3:ListBucketMultipartUploads",
+          "s3:PutObject",
+          "s3:PutObjectAcl"
         ],
         Resource = [
           aws_s3_bucket.lambda_logs.arn,
@@ -86,6 +89,25 @@ resource "aws_iam_role_policy" "lambda_policy" {
     ]
   })
 }
+
+resource "aws_iam_role_policy" "firehose_logs_policy" {
+  role = aws_iam_role.firehose_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "logs:PutSubscriptionFilter",
+          "logs:PutLogEvents"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 data "archive_file" "lambda_zip" {
   type        = "zip"
   source_dir  = "${path.module}/lambda"
@@ -121,12 +143,14 @@ resource "aws_kinesis_firehose_delivery_stream" "cw_to_s3" {
   name        = "lambda-logs-to-s3"
   destination = "s3"
 
-  s3_configuration {
-    role_arn   = aws_iam_role.firehose_role.arn
-    bucket_arn = aws_s3_bucket.lambda_logs.arn
-    buffering_size = 5
-    compression_format = "GZIP"
-  }
+extended_s3_configuration {
+  role_arn           = aws_iam_role.firehose_role.arn
+  bucket_arn         = aws_s3_bucket.lambda_logs.arn
+  buffering_size     = 5
+  compression_format = "GZIP"
+}
+
+  depends_on = [aws_s3_bucket.lambda_logs]
 }
 
 resource "aws_cloudwatch_log_subscription_filter" "lambda_to_s3" {
